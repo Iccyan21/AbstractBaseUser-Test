@@ -11,6 +11,9 @@ from rest_framework import status
 from rest_framework import generics
 from rest_framework.exceptions import NotFound
 from rest_framework.exceptions import PermissionDenied
+from .permissions import IsUserOrReadOnly
+from rest_framework.authtoken.models import Token
+from django.contrib.auth import authenticate, login
 # views.py
 
 from rest_framework.generics import CreateAPIView
@@ -48,8 +51,14 @@ class LoginAPIView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
-        # ここでトークン生成やセッション設定を行う
-        return Response({'message': 'Login successful!'}, status=status.HTTP_200_OK)
+        
+        
+        token, created = Token.objects.get_or_create(user=user)
+        return Response({
+            'token': token.key,
+            'userid': user.userid,
+            'message': 'Login successful!'
+        }, status=status.HTTP_200_OK)
     
 # 情報更新
 # RetrieveUpdateAPIViewを使う理由は更新に特化してるから(別にAPIViewでもいい)
@@ -57,14 +66,24 @@ class LoginAPIView(APIView):
 class UserUpdateView(generics.RetrieveUpdateAPIView):
     queryset = User.objects.all()
     serializer_class = UserUpdateSerializer
-    lookup_field = 'userid'  # URLからuseridを使用してオブジェクトを見つけるためのフィールド
+    lookup_field = 'userid'
+    permission_classes = [IsUserOrReadOnly]
 
     def get_object(self):
+        # URLからuseridを取得
         userid = self.kwargs.get('userid')
         try:
-            return User.objects.get(userid=userid)
+            # 対象のユーザーオブジェクトを取得
+            user = User.objects.get(userid=userid)
         except User.DoesNotExist:
+            # ユーザーが存在しない場合はNotFoundエラーを発生させる
             raise NotFound('A user with this userid does not exist.')
+
+        # リクエストユーザーが対象のユーザーでない場合はPermissionDeniedエラーを発生させる
+        if self.request.user != user:
+            raise PermissionDenied("You do not have permission to update this user's profile.")
+
+        return user
 
 
 class DeleteAccountView(APIView):
